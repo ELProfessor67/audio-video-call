@@ -2,10 +2,6 @@ var express = require('express');
 var app = express();
 var http = require('http').Server(app);
 var users = {};
-// var fs = require('fs');
-// var privateKey = fs.readFileSync('public/key/private.pem','utf8');
-// var certificate = fs.readFileSync('public/key/file.crt', 'utf8');
-// var credentials = {key: privateKey, cert: certificate};
 var http = require('http').createServer(app);
 var io = require('socket.io')(http);
 
@@ -26,14 +22,8 @@ app.get('/', function(req, res){
   res.sendFile(__dirname + '/index.html');
 });
 
-app.get('/webrtc', function(req, res){
-  console.log(__dirname);
-  res.sendFile(__dirname + '/webrtc.html');
-});
 
-app.get('/listUsers', function(req, res){
-  res.end(JSON.stringify(users, censor));
-});
+
 
 
 io.on('connection', function(socket){
@@ -49,6 +39,7 @@ io.on('connection', function(socket){
   });
   
   socket.on('chat message', function(msg){
+  
     if(msg.to == 'all'){
       socket.broadcast.emit('chat message', msg);
     }else{
@@ -78,11 +69,6 @@ io.on('connection', function(socket){
   
 });
 
-// var server = http.listen(3000, function(){
-//   var host = server.address().address
-//   var port = server.address().port
-//   console.log('listening on http://%s:%s', host, port);
-// });
 
 http.listen(3000, function(){
   console.log('listening on http://localhost:3000');

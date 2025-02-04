@@ -7,38 +7,28 @@ var localStream;
 var remoteCandidates = [];
 var sendChannel;
 var receiveChannel;
+let callingModal;
+let callStatus = null;
+let callerDetails = null;
+let timerRef = null;
 
 $(document).ready(function(){
-	console.log("document ready.");
-	console.log(adapter.browserDetails.browser);
-
-	$(this).attr('disabled', true).unbind('click');
-	// Make sure the browser supports WebRTC
 	if(!isWebrtcSupported()) {
-		bootbox.alert("No WebRTC support... ");
+		alert("No WebRTC support... ");
 		return;
 	}
+    callingModal = new bootstrap.Modal($("#callingModal"), {
+        backdrop: 'static', 
+        keyboard: false    
+    });
 
-	$('#videocall').removeClass('hide').show();
-	$('#login').removeClass('hide').show();
-	$('#registernow').removeClass('hide').show();
-	$('#register').click(registerUsername);
-	$('#username').focus();
+
 });
 
 
 socket.on('register succeed', function(msg){
 	myusername = msg["name"];
 	console.log("Successfully registered as " + myusername + "!");
-	$('#youok').removeClass('hide').show().html("Registered as '" + myusername + "'");
-	// Get a list of available peers, just for fun
-	//videocall.send({"message": { "request": "list" }});
-	// TODO Enable buttons to call now
-	$('#phone').removeClass('hide').show();
-	$('#call').unbind('click').click(doCall);
-	$('#peer').focus();
-
-	openDevices();
 });
 
 socket.on('register failed', function(msg){
@@ -78,21 +68,6 @@ function isWebrtcSupported() {
 	return window.RTCPeerConnection !== undefined && window.RTCPeerConnection !== null;
 };
 
-function checkEnter(field, event) {
-	var theCode = event.keyCode ? event.keyCode : event.which ? event.which : event.charCode;
-        if(theCode == 13) {
-                if(field.id == 'username')
-                        registerUsername();
-                else if(field.id == 'peer')
-                     doCall();
-		else if(field.id == 'datasend')
-			sendData();
-			return false;
-		} else {
-			return true;
-		}
-}
-
 function sendData() {
   const data = $('#datasend').val();
   sendChannel.send(data);
@@ -100,59 +75,17 @@ function sendData() {
   $('#datasend').val('');
 }
 
-function registerUsername(value=null) {
-	// Try a registration
-	$('#username').attr('disabled', true);
-	$('#register').attr('disabled', true).unbind('click');
-	var username = $('#username').val() || value;
-	if(username === "") {
-		bootbox.alert("Insert a username to register (e.g., pippo)");
-		$('#username').removeAttr('disabled');
-		$('#register').removeAttr('disabled').click(registerUsername);
-		return;
-	}
-	if(/[^a-zA-Z0-9]/.test(username)) {
-		bootbox.alert('Input is not alphanumeric');
-		$('#username').removeAttr('disabled').val("");
-		$('#register').removeAttr('disabled').click(registerUsername);
-		return;
-	}
+function registerUsername(username) {
 	var info = { "name": username };
 	socket.emit("register", info);
 	console.log("trying to register as " + username);
 }
 
-function openDevices(){
-	var options = {audio:true, video:true};
-	navigator.mediaDevices
-	      .getUserMedia(options)
-	      .then(onLocalStream)
-	      .catch(function(e) {
-		alert('getUserMedia() failed');
-		console.log('getUserMedia() error: ', e);
-	      });
-}
 
-function onLocalStream(stream) {
-	console.log('Received local stream');
-	$('#videos').removeClass('hide').show();
-	if($('#myvideo').length === 0)
-		$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay playsinline muted="muted"/>');
-	$('#myvideo').get(0).srcObject = stream;
-	$("#myvideo").get(0).muted = "muted";
 
-	var videoTracks = stream.getVideoTracks();
-	var audioTracks = stream.getAudioTracks();
-	if (videoTracks.length > 0) {
-		console.log('Using video device: ' + videoTracks[0].label);
-	}
-	if (audioTracks.length > 0) {
-		console.log('Using audio device: ' + audioTracks[0].label);
-	}
-	localStream = stream;
-}
+function createPc(type){
+	
 
-function createPc(){
 	var configuration = { "iceServers": [{ "urls": "stun:stun.ideasip.com" }] };
 	pc = new RTCPeerConnection(configuration);
 	console.log('Created local peer connection object pc');
@@ -170,34 +103,35 @@ function createPc(){
 	};
 
 	pc.ondatachannel = receiveChannelCallback;
-	pc.ontrack  = gotRemoteTrack;
+	pc.ontrack  = (e) => gotRemoteTrack(e, type);
+	console.log('localStream',localStream);
 	pc.addStream(localStream);
 	console.log('Added local stream to pc');
 }
 
-function doCall() {
-	// Call someone
-	$('#peer').attr('disabled', true);
-	$('#call').attr('disabled', true).unbind('click');
-	var username = $('#peer').val();
-	if(username === "") {
-		bootbox.alert("Insert a username to call (e.g., pluto)");
-		$('#peer').removeAttr('disabled');
-		$('#call').removeAttr('disabled').click(doCall);
+async function doCall(username,type='audio',name,profile) {
+	try {
+		if(type == 'audio'){
+			localStream = await navigator.mediaDevices.getUserMedia({audio: true})
+		}else{
+			localStream = await navigator.mediaDevices.getUserMedia({audio: true,video: true})
+		}
+	} catch (error) {
+		alert("We need access to media devices to make a call.");
 		return;
 	}
-	if(/[^a-zA-Z0-9]/.test(username)) {
-		bootbox.alert('Input is not alphanumeric');
-		$('#peer').removeAttr('disabled').val("");
-		$('#call').removeAttr('disabled').click(doCall);
-		return;
+
+	if(type == 'video'){
+		$("#videoElement").removeClass("hide");
+		$("#videoElement").get(0).srcObject = localStream;
+		$("#videoElement").get(0).muted = true;
 	}
+
 	// Call this user
 	peerusername = username;
 	
-	createPc();
+	createPc(type);
 
-	console.log(' createOffer start');
 	var offerOptions = {
 	  offerToReceiveAudio: 0,
 	  offerToReceiveVideo: 1,
@@ -207,17 +141,17 @@ function doCall() {
 	pc.createOffer(
 		offerOptions
 	).then(
-		onCreateOfferSuccess,
+		(desc) => onCreateOfferSuccess(desc,type,name,profile),
 		onCreateSessionDescriptionError
 	);
 }
 
 function onCreateSessionDescriptionError(error) {
 	console.log('Failed to create session description: ' + error.toString());
-	bootbox.alert("WebRTC error... " + JSON.stringify(error));
+	alert("WebRTC error... " + fJSON.stringiy(error));
 }
 
-function onCreateOfferSuccess(desc) {
+function onCreateOfferSuccess(desc,callType,name,profile) {
 	  console.log('Offer from pc\n' + desc.sdp);
 	  console.log('pc setLocalDescription start');
 	  pc.setLocalDescription(desc).then(
@@ -228,10 +162,14 @@ function onCreateOfferSuccess(desc) {
 	  );
 
 	//Send offer to remote side
-	var message = {from: myusername, to:peerusername, type: 'signal', subtype: 'offer', content: desc, time:new Date()};
+	var message = {from: myusername, to:peerusername, type: 'signal', subtype: 'offer', content: desc, time:new Date(),callType:callType,user: {name,profile}};
 	socket.emit('chat message', message);
-	
-	bootbox.alert("Waiting for the peer to answer...");
+    callStatus = "ringing...";
+    $("#callStatus").removeClass('hide').text("Ringing...");
+   	$("#endCallBtn").removeClass('hide').on('click', doHangup);
+	$("#callingModalLabel").text(name);
+	$("#userImageAvatar").get(0).src = profile;
+	callingModal.show();
 }
 
 function onSetLocalSuccess(pc) {
@@ -247,20 +185,15 @@ function onSetSessionDescriptionError(error) {
 	console.log('Failed to set session description: ' + error.toString());
 }
 
-function gotRemoteTrack(e) {
-	if($('#remotevideo').length === 0) {
-		addButtons = true;
-		$('#videoright').append('<video class="rounded centered hide" id="remotevideo" width=320 height=240 autoplay playsinline/>');
-		// Show the video, hide the spinner and show the resolution when we get a playing event
-		$("#remotevideo").bind("playing", function () {
-			if(this.videoWidth)
-				$('#remotevideo').removeClass('hide').show();
-		});
-		$('#callee').removeClass('hide').html(peerusername).show();
+function gotRemoteTrack(e,type) {
+	console.log('track', e.streams[0]);
+	if(type == "video"){
+		$("#videoElement").removeClass("hide");
 	}
-	$('#remotevideo').get(0).srcObject = e.streams[0];
-	console.log('pc received remote track');
+	$("#videoElement").get(0).srcObject = e.streams[0];
+	$("#videoElement").get(0).muted = false;
 }
+
 
 function onSignalMessage(m){
 	if(m.subtype == 'offer'){
@@ -278,44 +211,67 @@ function onSignalMessage(m){
 }
 
 
+function AnswerCall () {
+   
+    msg = callerDetails
+	var callType = msg["callType"];
+    peerusername = msg["from"];
+	let videoPromose;
+	if(callType == 'audio'){
+		videoPromose = navigator.mediaDevices.getUserMedia({audio: true})
+	}else{
+		videoPromose = navigator.mediaDevices.getUserMedia({audio: true,video: true});
+	}
+
+	videoPromose.then(stream => {
+		localStream = stream;
+
+		createPc(callType);
+		var Offer = msg["content"];
+    	$("#answerCallBtn").addClass('hide').off('click', AnswerCall);
+    	$("#timerContainer").removeClass("hide");
+    	$("#callStatus").addClass('hide');
+    	startTimer();
+		callStatus = "processing"
+		console.log('on remoteOffer :'+ Offer.sdp);
+		pc.setRemoteDescription(Offer).then(function(){
+			onSetRemoteSuccess(pc)}, onSetSessionDescriptionError
+		);
+		pc.createAnswer().then(
+			onCreateAnswerSuccess,
+			onCreateSessionDescriptionError
+		);
+	}).catch(err => {
+		alert("We need access to media devices to make a call.");
+	});				
+}
+
+
+
+
+
+
+
+			
+
 function onSignalOffer(msg){
 
 	console.log("Incoming call from " + msg["from"] + "!");
+	
+    callerDetails = msg;
+	callStatus = "incoming"
 	peerusername = msg["from"];
-	// Notify user
-	bootbox.hideAll();
-	incoming = bootbox.dialog({
-		message: "Incoming call from " + peerusername + "!",
-		title: "Incoming call",
-		closeButton: false,
-		buttons: {
-			success: {
-				label: "Answer",
-				className: "btn-success",
-				callback: function() {
-					createPc();
-					var Offer = msg["content"];
-					incoming = null;
-					$('#peer').val(peerusername).attr('disabled', true);
-					console.log('on remoteOffer :'+ Offer.sdp);
-					pc.setRemoteDescription(Offer).then(function(){
-						onSetRemoteSuccess(pc)}, onSetSessionDescriptionError
-					);
-					pc.createAnswer().then(
-						onCreateAnswerSuccess,
-						onCreateSessionDescriptionError
-					);
-				}
-			},
-			danger: {
-				label: "Decline",
-				className: "btn-danger",
-				callback: function() {
-					doHangup();
-				}
-			}
-		}
-	});
+	
+	
+    $("#answerCallBtn").removeClass('hide').on('click', AnswerCall);
+    $("#endCallBtn").removeClass('hide').on('click', doHangup);
+    $("#callStatus").removeClass('hide').text('Incoming...');
+
+	console.log(msg)
+	$("#callingModalLabel").text(msg["user"]["name"]);
+	$("#userImageAvatar").get(0).src = msg["user"]["profile"];
+
+    callingModal.show();
 }
 
 function onSignalCandidate(candidate){
@@ -323,18 +279,26 @@ function onSignalCandidate(candidate){
 }
 
 function onSignalAnswer(answer){
-	bootbox.hideAll();
+	
+	$("#callStatus").addClass("hide");
+	$("#timerContainer").removeClass("hide");
+	callStatus = "processing";
+    startTimer();
 	onRemoteAnswer(answer);
 }
 	
 function onSignalClose(){
-	bootbox.hideAll();
   	console.log('Call end ');
 	pc.close();
 	pc = null;
 	
 	peerusername = null;
-	clearViews();
+	$("#videoElement").addClass("hide");
+	$("#endCallBtn").addClass("hide");
+	$("#answerCallBtn").addClass("hide");
+	$("#closeModal").removeClass("hide").on('click',closeModal);
+	$("#callStatus").text("Call Ended");
+	clearInterval(timerRef);
 }
 
 function onRemoteAnswer(answer){
@@ -382,11 +346,6 @@ function onCreateAnswerSuccess(desc) {
 		},
 		onSetSessionDescriptionError
 	);
-  
-	$('#peer').attr('disabled', true);
-	$('#call').removeAttr('disabled').html('Hangup')
-		.removeClass("btn-success").addClass("btn-danger")
-		.unbind('click').click(doHangup);
 
 	//Sent answer to remote side
   	var message = {from: myusername, to:peerusername, type: 'signal', subtype: 'answer', content: desc, time:new Date()};
@@ -448,42 +407,51 @@ function onReceiveChannelStateChange() {
   console.log(`Receive channel state is: ${readyState}`);
 }
 
-	
+
+function closeModal(){
+	callingModal.hide();
+}
+
 function doHangup() {
 	console.log('Hangup call');
-	sendChannel.close();
-	receiveChannel.close();
+	if(sendChannel?.close) sendChannel.close();	
+	if(receiveChannel?.close) receiveChannel.close();
 
-	pc.close();
+	if(pc?.close) pc.close();
 	pc = null;
-  
-  
+
+	$("#videoElement").addClass("hide");
+	$("#endCallBtn").addClass("hide");
+	$("#answerCallBtn").addClass("hide");
+	$("#closeModal").removeClass("hide").on('click',closeModal);
+	$("#callStatus").text("Call Ended");
+	clearInterval(timerRef);
   	//Send signal to remote side
     	var message = {from: myusername, to:peerusername, type: 'signal', subtype: 'close', content: 'close', time:new Date()};
 	socket.emit('chat message', message);
 
 	peerusername = null;
-	clearViews();
+	
 }
 
+function startTimer() {
+    let seconds = 0;
+    let minutes = 0;
 
-function clearViews(){
-	//$('#myvideo').remove();
-	$('#remotevideo').remove();
-	$("#videoleft").parent().unblock();
-	$('#callee').empty().hide();
-	peerusername = null;
-	//$('#videos').hide();
+    // Update the timer every second
+    timerRef = setInterval(function() {
+        seconds++;
 
-	$('#call').removeAttr('disabled').unbind('click').click(doCall).html('Call').removeClass("btn-danger").addClass("btn-success");
-	$('#peer').removeAttr('disabled').val("");
+        if (seconds === 60) {
+            seconds = 0;
+            minutes++;
+        }
 
-	$('#datasend').val('');
-	$('#datarecv').val('');
-	$('#datasend').attr('disabled', true);
-	$('#datarecv').attr('disabled', true);
+        // Format minutes and seconds as "MM:SS"
+        let formattedTime = `${minutes < 10 ? '0' + minutes : minutes}:${seconds < 10 ? '0' + seconds : seconds}`;
+        $("#timer").text(formattedTime);
+    }, 1000);
 }
-
 
 const promt = window.prompt("Enter your ID manually for now. After implementation, it will be dynamically retrieved from the logged-in user. Example: user5 (must contain both numbers and characters)");
 registerUsername(promt)
